@@ -10,7 +10,6 @@ import com.example.sinitto.helloCall.entity.TimeSlot;
 import com.example.sinitto.helloCall.exception.CompletionConditionNotFulfilledException;
 import com.example.sinitto.helloCall.exception.HelloCallAlreadyExistsException;
 import com.example.sinitto.helloCall.exception.HelloCallNotFoundException;
-import com.example.sinitto.helloCall.exception.TimeRuleException;
 import com.example.sinitto.helloCall.repository.HelloCallRepository;
 import com.example.sinitto.helloCall.repository.HelloCallTimeLogRepository;
 import com.example.sinitto.helloCall.repository.TimeSlotRepository;
@@ -21,6 +20,9 @@ import com.example.sinitto.member.exception.MemberNotFoundException;
 import com.example.sinitto.member.repository.MemberRepository;
 import com.example.sinitto.sinitto.exception.SinittoNotFoundException;
 import com.example.sinitto.sinitto.repository.SinittoRepository;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -91,21 +93,24 @@ public class HelloCallService {
     }
 
     @Transactional
-    public List<HelloCallResponse> readAllWaitingHelloCallsBySinitto() {
-
-        List<HelloCallResponse> helloCallResponses = new ArrayList<>();
+    public Page<HelloCallResponse> readAllWaitingHelloCallsBySinitto(Pageable pageable) {
 
         List<HelloCall> helloCalls = helloCallRepository.findAll();
 
-        for (HelloCall helloCall : helloCalls) {
-            if (helloCall.getStatus().equals(HelloCall.Status.WAITING)) {
-                HelloCallResponse response = new HelloCallResponse(helloCall.getId(), helloCall.getSenior().getName(),
-                        helloCall.getTimeSlots().stream().map(TimeSlot::getDay).toList(), helloCall.getStatus());
+        List<HelloCallResponse> helloCallResponses = helloCalls.stream()
+                .filter(helloCall -> helloCall.getStatus().equals(HelloCall.Status.WAITING))
+                .map(helloCall -> new HelloCallResponse(
+                        helloCall.getId(), helloCall.getSenior().getName(),
+                        helloCall.getTimeSlots().stream().map(TimeSlot::getDay).toList(), helloCall.getStatus()
+                )).toList();
 
-                helloCallResponses.add(response);
-            }
-        }
-        return helloCallResponses;
+        int totalElements = helloCallResponses.size();
+        int start = (int) pageable.getOffset();
+        int end = Math.min(start + pageable.getPageSize(), totalElements);
+
+        List<HelloCallResponse> pagedResponse = helloCallResponses.subList(start, end);
+
+        return new PageImpl<>(pagedResponse, pageable, totalElements);
     }
 
     @Transactional(readOnly = true)
@@ -217,8 +222,26 @@ public class HelloCallService {
                 helloCall.getEndDate(), helloCall.getSinittoName(), helloCall.getReport());
     }
 
+    @Transactional
+    public void makeCompleteHelloCallByGuard(Long memberId, Long helloCallId) {
+        Member member = memberRepository.findById(memberId)
+                .orElseThrow(() -> new MemberNotFoundException("id에 해당하는 멤버를 찾을 수 없습니다."));
+
+        HelloCall helloCall = helloCallRepository.findById(helloCallId)
+                .orElseThrow(() -> new HelloCallNotFoundException("id에 해당하는 안부전화 정보를 찾을 수 없습니다."));
+
+        helloCall.checkGuardIsCorrect(member);
+
+        helloCall.changeStatusToComplete();
+
+        Sinitto earnedSinitto = helloCall.getSinitto();
+
+        //earnedSinitto에게 포인트 지급 로직 필요합니다.
+    }
+
+
     @Transactional(readOnly = true)
-    public List<HelloCallReportResponse> readAllHelloCallReport() {
+    public List<HelloCallReportResponse> readAllHelloCallReportByAdmin() {
         List<HelloCall> helloCalls = helloCallRepository.findAll();
 
         List<HelloCallReportResponse> helloCallReportResponses = new ArrayList<>();
@@ -287,8 +310,8 @@ public class HelloCallService {
     }
 
     @Transactional
-    public void completeAndSendReportBySinitto(Long memberId, Long helloCallId, HelloCallReportRequest helloCallReportRequest) {
-        HelloCall helloCall = helloCallRepository.findById(helloCallId)
+    public void SendReportBySinitto(Long memberId, HelloCallReportRequest helloCallReportRequest) {
+        HelloCall helloCall = helloCallRepository.findById(helloCallReportRequest.helloCallId())
                 .orElseThrow(() -> new HelloCallNotFoundException("id에 해당하는 안부전화 정보를 찾을 수 없습니다."));
 
         Sinitto sinitto = sinittoRepository.findByMemberId(memberId)
@@ -300,7 +323,25 @@ public class HelloCallService {
         }
 
         helloCall.setReport(helloCallReportRequest.report());
-        helloCall.changeStatusToComplete();
+        helloCall.changeStatusToPendingComplete();
+    }
+
+    @Transactional(readOnly = true)
+    public List<HelloCallResponse> readOwnHelloCallBySinitto(Long memberId) {
+        Sinitto sinitto = sinittoRepository.findByMemberId(memberId)
+                .orElseThrow(() -> new SinittoNotFoundException("id에 해당하는 시니또를 찾을 수 없습니다."));
+
+        List<HelloCall> helloCalls = helloCallRepository.findAllBySinitto(sinitto);
+
+        List<HelloCallResponse> helloCallResponses = new ArrayList<>();
+
+        for (HelloCall helloCall : helloCalls) {
+            HelloCallResponse response = new HelloCallResponse(helloCall.getId(), helloCall.getSenior().getName(),
+                    helloCall.getTimeSlots().stream().map(TimeSlot::getDay).toList(), helloCall.getStatus());
+            helloCallResponses.add(response);
+        }
+
+        return helloCallResponses;
     }
 
 
