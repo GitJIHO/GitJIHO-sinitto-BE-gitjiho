@@ -78,20 +78,15 @@ public class HelloCallService {
     public List<HelloCallResponse> readAllHelloCallsByGuard(Long memberId) {
         List<Senior> seniors = seniorRepository.findByMemberId(memberId);
 
-        List<HelloCallResponse> helloCallResponsesForGuard = new ArrayList<>();
+        List<HelloCall> helloCalls = helloCallRepository.findAllBySeniorIn(seniors);
 
-        for (Senior senior : seniors) {
-            if (helloCallRepository.existsBySenior(senior)) {
-                HelloCall helloCall = helloCallRepository.findBySenior(senior).orElseThrow(
-                        () -> new HelloCallNotFoundException("신청된 시니어의 안부전화 정보를 찾을 수 없습니다."));
-
-                HelloCallResponse response = new HelloCallResponse(helloCall.getId(), helloCall.getSenior().getName(),
-                        helloCall.getTimeSlots().stream().map(TimeSlot::getDayName).toList(), helloCall.getStatus());
-
-                helloCallResponsesForGuard.add(response);
-            }
-        }
-        return helloCallResponsesForGuard;
+        return helloCalls.stream()
+                .map(helloCall -> new HelloCallResponse(
+                        helloCall.getId(),
+                        helloCall.getSenior().getName(),
+                        helloCall.getTimeSlots().stream().map(TimeSlot::getDayName).toList(),
+                        helloCall.getStatus()))
+                .toList();
     }
 
     @Transactional
@@ -148,25 +143,13 @@ public class HelloCallService {
     }
 
     private void updateTimeSlots(HelloCall helloCall, List<HelloCallDetailUpdateRequest.TimeSlot> updatedTimeSlots) {
-        List<String> updatedDays = updatedTimeSlots.stream()
-                .map(HelloCallDetailUpdateRequest.TimeSlot::dayName)
-                .toList();
-
-        List<TimeSlot> existingTimeSlots = new ArrayList<>(helloCall.getTimeSlots());
-
-        for (TimeSlot existingSlot : existingTimeSlots) {
-            if (!updatedDays.contains(existingSlot.getDayName())) {
-                timeSlotRepository.delete(existingSlot);
-                helloCall.getTimeSlots().remove(existingSlot);
-            }
-        }
+        timeSlotRepository.deleteAllByHelloCall(helloCall);
+        helloCall.getTimeSlots().clear();
 
         for (HelloCallDetailUpdateRequest.TimeSlot updatedSlot : updatedTimeSlots) {
-            TimeSlot timeSlot = timeSlotRepository.findByHelloCallAndDayName(helloCall, updatedSlot.dayName())
-                    .orElse(new TimeSlot(updatedSlot.dayName(), updatedSlot.startTime(), updatedSlot.endTime(), helloCall));
-
-            timeSlot.updateTimeSlot(updatedSlot.startTime(), updatedSlot.endTime());
-            timeSlotRepository.save(timeSlot);
+            TimeSlot newTimeSlot = new TimeSlot(updatedSlot.dayName(), updatedSlot.startTime(), updatedSlot.endTime(), helloCall);
+            timeSlotRepository.save(newTimeSlot);
+            helloCall.getTimeSlots().add(newTimeSlot);
         }
     }
 
