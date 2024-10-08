@@ -10,6 +10,7 @@ import com.example.sinitto.helloCall.entity.TimeSlot;
 import com.example.sinitto.helloCall.exception.CompletionConditionNotFulfilledException;
 import com.example.sinitto.helloCall.exception.HelloCallAlreadyExistsException;
 import com.example.sinitto.helloCall.exception.HelloCallNotFoundException;
+import com.example.sinitto.helloCall.exception.TimeLogSequenceException;
 import com.example.sinitto.helloCall.repository.HelloCallRepository;
 import com.example.sinitto.helloCall.repository.HelloCallTimeLogRepository;
 import com.example.sinitto.helloCall.repository.TimeSlotRepository;
@@ -29,6 +30,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 @Service
 public class HelloCallService {
@@ -66,7 +68,7 @@ public class HelloCallService {
         HelloCall savedHelloCall = helloCallRepository.save(helloCall);
 
         for (HelloCallRequest.TimeSlot timeSlotRequest : helloCallRequest.timeSlots()) {
-            TimeSlot timeSlot = new TimeSlot(timeSlotRequest.day(), timeSlotRequest.startTime(),
+            TimeSlot timeSlot = new TimeSlot(timeSlotRequest.dayName(), timeSlotRequest.startTime(),
                     timeSlotRequest.endTime(), savedHelloCall);
             timeSlotRepository.save(timeSlot);
         }
@@ -84,7 +86,7 @@ public class HelloCallService {
                         () -> new HelloCallNotFoundException("신청된 시니어의 안부전화 정보를 찾을 수 없습니다."));
 
                 HelloCallResponse response = new HelloCallResponse(helloCall.getId(), helloCall.getSenior().getName(),
-                        helloCall.getTimeSlots().stream().map(TimeSlot::getDay).toList(), helloCall.getStatus());
+                        helloCall.getTimeSlots().stream().map(TimeSlot::getDayName).toList(), helloCall.getStatus());
 
                 helloCallResponsesForGuard.add(response);
             }
@@ -101,7 +103,7 @@ public class HelloCallService {
                 .filter(helloCall -> helloCall.getStatus().equals(HelloCall.Status.WAITING))
                 .map(helloCall -> new HelloCallResponse(
                         helloCall.getId(), helloCall.getSenior().getName(),
-                        helloCall.getTimeSlots().stream().map(TimeSlot::getDay).toList(), helloCall.getStatus()
+                        helloCall.getTimeSlots().stream().map(TimeSlot::getDayName).toList(), helloCall.getStatus()
                 )).toList();
 
         int totalElements = helloCallResponses.size();
@@ -118,8 +120,12 @@ public class HelloCallService {
         HelloCall helloCall = helloCallRepository.findById(HelloCallId)
                 .orElseThrow(() -> new HelloCallNotFoundException("id에 해당하는 안부전화 정보를 찾을 수 없습니다."));
 
+        List<HelloCallDetailResponse.TimeSlot> timeSlots = helloCall.getTimeSlots().stream()
+                .map(timeSlot -> new HelloCallDetailResponse.TimeSlot(
+                        timeSlot.getDayName(), timeSlot.getStartTime(), timeSlot.getEndTime())).toList();
+
         return new HelloCallDetailResponse(helloCall.getStartDate(), helloCall.getEndDate(),
-                helloCall.getTimeSlots(), helloCall.getRequirement(), helloCall.getSenior().getName(),
+                timeSlots, helloCall.getRequirement(), helloCall.getSenior().getName(),
                 helloCall.getSenior().getPhoneNumber(), helloCall.getPrice());
     }
 
@@ -143,21 +149,21 @@ public class HelloCallService {
 
     private void updateTimeSlots(HelloCall helloCall, List<HelloCallDetailUpdateRequest.TimeSlot> updatedTimeSlots) {
         List<String> updatedDays = updatedTimeSlots.stream()
-                .map(HelloCallDetailUpdateRequest.TimeSlot::day)
+                .map(HelloCallDetailUpdateRequest.TimeSlot::dayName)
                 .toList();
 
         List<TimeSlot> existingTimeSlots = new ArrayList<>(helloCall.getTimeSlots());
 
         for (TimeSlot existingSlot : existingTimeSlots) {
-            if (!updatedDays.contains(existingSlot.getDay())) {
+            if (!updatedDays.contains(existingSlot.getDayName())) {
                 timeSlotRepository.delete(existingSlot);
                 helloCall.getTimeSlots().remove(existingSlot);
             }
         }
 
         for (HelloCallDetailUpdateRequest.TimeSlot updatedSlot : updatedTimeSlots) {
-            TimeSlot timeSlot = timeSlotRepository.findByHelloCallAndDay(helloCall, updatedSlot.day())
-                    .orElse(new TimeSlot(updatedSlot.day(), updatedSlot.startTime(), updatedSlot.endTime(), helloCall));
+            TimeSlot timeSlot = timeSlotRepository.findByHelloCallAndDayName(helloCall, updatedSlot.dayName())
+                    .orElse(new TimeSlot(updatedSlot.dayName(), updatedSlot.startTime(), updatedSlot.endTime(), helloCall));
 
             timeSlot.updateTimeSlot(updatedSlot.startTime(), updatedSlot.endTime());
             timeSlotRepository.save(timeSlot);
@@ -207,12 +213,13 @@ public class HelloCallService {
 
     @Transactional(readOnly = true)
     public HelloCallReportResponse readHelloCallReportByGuard(Long memberId, Long helloCallId) {
-        if (!sinittoRepository.existsByMemberId(memberId)) {
-            throw new MemberNotFoundException("id에 해당하는 멤버를 찾을 수 없습니다.");
-        }
+        Member member = memberRepository.findById(memberId)
+                .orElseThrow(() -> new MemberNotFoundException("id에 해당하는 멤버를 찾을 수 없습니다."));
 
         HelloCall helloCall = helloCallRepository.findById(helloCallId)
                 .orElseThrow(() -> new HelloCallNotFoundException("id에 해당하는 안부전화 정보를 찾을 수 없습니다."));
+
+        helloCall.checkGuardIsCorrect(member);
 
         if (!helloCall.checkReportIsNotNull()) {
             throw new CompletionConditionNotFulfilledException("아직 안부전화 서비스가 완료되지 않았습니다.");
@@ -276,6 +283,13 @@ public class HelloCallService {
         Sinitto sinitto = sinittoRepository.findByMemberId(memberId)
                 .orElseThrow(() -> new SinittoNotFoundException("id에 해당하는 시니또를 찾을 수 없습니다."));
 
+        Optional<HelloCallTimeLog> recentLog = helloCallTimeLogRepository
+                .findTopBySinittoAndHelloCallOrderByStartDateAndTimeDesc(sinitto, helloCall);
+
+        if (recentLog.isPresent() && recentLog.get().getEndDateAndTime() == null) {
+            throw new TimeLogSequenceException("이미 시작된 안부전화가 있습니다. 종료를 먼저 완료해주세요.");
+        }
+
         HelloCallTimeLog helloCallTimeLog = new HelloCallTimeLog(helloCall, sinitto);
         helloCallTimeLog.setStartDateAndTime(LocalDateTime.now());
 
@@ -285,11 +299,19 @@ public class HelloCallService {
 
     @Transactional
     public HelloCallTimeResponse writeHelloCallEndTimeBySinitto(Long memberId, Long helloCallId) {
+        HelloCall helloCall = helloCallRepository.findById(helloCallId)
+                .orElseThrow(() -> new HelloCallNotFoundException("id에 해당하는 안부전화 정보를 찾을 수 없습니다."));
+
         Sinitto sinitto = sinittoRepository.findByMemberId(memberId)
                 .orElseThrow(() -> new SinittoNotFoundException("id에 해당하는 시니또를 찾을 수 없습니다."));
 
-        HelloCallTimeLog helloCallTimeLog = helloCallTimeLogRepository.findBySinittoAndAndHelloCallId(sinitto, helloCallId)
+        HelloCallTimeLog helloCallTimeLog = helloCallTimeLogRepository
+                .findTopBySinittoAndHelloCallOrderByStartDateAndTimeDesc(sinitto, helloCall)
                 .orElseThrow(() -> new HelloCallNotFoundException("안부전화 로그를 찾을 수 없습니다."));
+
+        if (helloCallTimeLog.getEndDateAndTime() != null) {
+            throw new TimeLogSequenceException("이미 종료된 안부전화입니다.");
+        }
 
         helloCallTimeLog.setEndDateAndTime(LocalDateTime.now());
 
@@ -337,7 +359,7 @@ public class HelloCallService {
 
         for (HelloCall helloCall : helloCalls) {
             HelloCallResponse response = new HelloCallResponse(helloCall.getId(), helloCall.getSenior().getName(),
-                    helloCall.getTimeSlots().stream().map(TimeSlot::getDay).toList(), helloCall.getStatus());
+                    helloCall.getTimeSlots().stream().map(TimeSlot::getDayName).toList(), helloCall.getStatus());
             helloCallResponses.add(response);
         }
 

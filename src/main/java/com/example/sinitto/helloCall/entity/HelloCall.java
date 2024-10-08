@@ -43,7 +43,7 @@ public class HelloCall {
     private Senior senior;
     @OneToMany(mappedBy = "helloCall", cascade = CascadeType.REMOVE)
     private List<TimeSlot> timeSlots = new ArrayList<>();
-    @OneToOne
+    @ManyToOne
     @JoinColumn(name = "sinitto_id")
     private Sinitto sinitto;
     @OneToMany(mappedBy = "helloCall", cascade = CascadeType.REMOVE)
@@ -98,6 +98,10 @@ public class HelloCall {
         return price;
     }
 
+    public int getServiceTime() {
+        return serviceTime;
+    }
+
     public Sinitto getSinitto() {
         return sinitto;
     }
@@ -140,7 +144,7 @@ public class HelloCall {
 
     public void checkGuardIsCorrect(Member member) {
         if (!this.senior.getMember().equals(member)) {
-            throw new UnauthorizedException("안부전화 서비스를 완료시킬 권한이 없습니다.");
+            throw new UnauthorizedException("해당 시니어의 안부전화를 신청한 보호자가 아닙니다.");
         }
     }
 
