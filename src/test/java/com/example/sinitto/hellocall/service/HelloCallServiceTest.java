@@ -264,42 +264,6 @@ public class HelloCallServiceTest {
     }
 
     @Test
-    @DisplayName("updateHelloCallByGuard 메소드 테스트 - HelloCall이 없을 때")
-    void updateHelloCallByGuardTestWhenHelloCallIsNotExist() {
-        //given
-        Long memberId = 1L;
-        Long helloCallId = 2L;
-        List<HelloCallDetailUpdateRequest.TimeSlot> timeSlots = new ArrayList<>();
-        timeSlots.add(new HelloCallDetailUpdateRequest.TimeSlot("월", LocalTime.now(), LocalTime.now().plusHours(2)));
-        HelloCallDetailUpdateRequest helloCallDetailUpdateRequest = new HelloCallDetailUpdateRequest(LocalDate.now(), LocalDate.now().plusDays(7), timeSlots, 1000, 10, "testRequirement");
-
-        when(helloCallRepository.findById(helloCallId)).thenReturn(Optional.empty());
-
-        //when, then
-        assertThrows(NotFoundException.class, () -> helloCallService.updateHelloCallByGuard(memberId, helloCallId, helloCallDetailUpdateRequest));
-    }
-
-    @Test
-    @DisplayName("updateHelloCallByGuard 메소드 테스트 - member가 없을 때")
-    void updateHelloCallByGuardTestWhenMemberIsNotExist() {
-        //given
-        Member member = mock(Member.class);
-        Long memberId = 1L;
-        Senior senior = new Senior("testSeniorName", "01012345678", member);
-        Long helloCallId = 2L;
-        List<HelloCallDetailUpdateRequest.TimeSlot> timeSlots = new ArrayList<>();
-        timeSlots.add(new HelloCallDetailUpdateRequest.TimeSlot("월", LocalTime.now(), LocalTime.now().plusHours(2)));
-        HelloCallDetailUpdateRequest helloCallDetailUpdateRequest = new HelloCallDetailUpdateRequest(LocalDate.now(), LocalDate.now().plusDays(7), timeSlots, 1000, 10, "testRequirement");
-        HelloCall helloCall = new HelloCall(LocalDate.now(), LocalDate.now().plusDays(7), 500, 10, "testRequirement", senior);
-
-        when(helloCallRepository.findById(helloCallId)).thenReturn(Optional.of(helloCall));
-        when(memberRepository.findById(memberId)).thenReturn(Optional.empty());
-
-        //when, then
-        assertThrows(NotFoundException.class, () -> helloCallService.updateHelloCallByGuard(memberId, helloCallId, helloCallDetailUpdateRequest));
-    }
-
-    @Test
     @DisplayName("deleteHellCallByGuard 메소드 테스트")
     void deleteHellCallByGuardTest() {
         //given
@@ -971,4 +935,39 @@ public class HelloCallServiceTest {
         //when, then
         assertThrows(NotFoundException.class, () -> helloCallService.readOwnHelloCallBySinitto(memberId));
     }
+
+    @Test
+    @DisplayName("시니또 탈퇴시 할당받은 안부전화가 있으면 안부전화 엔티티를 대기상태로 바꾸고, 멤버도 null 로 교체한다.")
+    void cancelAssignedHelloCallIfInProgressTest1() {
+        // given
+        Member member = mock(Member.class);
+        HelloCall helloCall = mock(HelloCall.class);
+
+        when(helloCallRepository.findByMemberAndStatus(member, HelloCall.Status.IN_PROGRESS)).thenReturn(List.of(helloCall));
+
+        // when
+        helloCallService.cancelAssignedHelloCallIfInProgress(member);
+
+        // then
+        verify(helloCall, times(1)).changeStatusToWaiting();
+        verify(helloCall, times(1)).setMember(null);
+    }
+
+    @Test
+    @DisplayName("시니또 탈퇴시 할당받은 안부전화가 없으면 아무것도 하지 않는다.")
+    void cancelAssignedHelloCallIfInProgressTest2() {
+        // given
+        Member member = mock(Member.class);
+        HelloCall helloCall = mock(HelloCall.class);
+
+        when(helloCallRepository.findByMemberAndStatus(member, HelloCall.Status.IN_PROGRESS)).thenReturn(List.of());
+
+        // when
+        helloCallService.cancelAssignedHelloCallIfInProgress(member);
+
+        // then
+        verify(helloCall, never()).changeStatusToWaiting();
+        verify(helloCall, never()).setMember(null);
+    }
+
 }

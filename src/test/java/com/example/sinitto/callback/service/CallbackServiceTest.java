@@ -47,6 +47,34 @@ class CallbackServiceTest {
     @InjectMocks
     CallbackService callbackService;
 
+    @Test
+    @DisplayName("보호자의 콜백 요청 내역 조회 테스트")
+    void getCallbackHistoryOfGuard() {
+        // given
+        Long memberId = 1L;
+        Member member = mock(Member.class);
+        Senior senior = mock(Senior.class);
+        List<Senior> seniors = List.of(senior);
+        Callback callback = mock(Callback.class);
+        Page<Callback> callbackPage = new PageImpl<>(List.of(callback));
+        Pageable pageable = PageRequest.of(0, 10);
+
+        when(memberRepository.findById(memberId)).thenReturn(Optional.of(member));
+        when(seniorRepository.findAllByMember(member)).thenReturn(seniors);
+        when(callbackRepository.findAllBySeniorIn(seniors, pageable)).thenReturn(callbackPage);
+        when(callback.getId()).thenReturn(1L);
+        when(callback.getSeniorName()).thenReturn("SeniorName");
+        when(callback.getPostTime()).thenReturn(LocalDateTime.now());
+        when(callback.getStatus()).thenReturn(Callback.Status.WAITING.name());
+
+        // when
+        Page<CallbackUsageHistoryResponse> result = callbackService.getCallbackHistoryOfGuard(memberId, pageable);
+
+        // then
+        assertEquals(1, result.getContent().size());
+        assertEquals("SeniorName", result.getContent().getFirst().seniorName());
+    }
+
     @Nested
     @DisplayName("대기 상태인 콜백 조회 테스트")
     class GetWaitingCallbackTest {
@@ -502,31 +530,42 @@ class CallbackServiceTest {
         }
     }
 
-    @Test
-    @DisplayName("보호자의 콜백 요청 내역 조회 테스트")
-    void getCallbackHistoryOfGuard() {
-        // given
-        Long memberId = 1L;
-        Member member = mock(Member.class);
-        Senior senior = mock(Senior.class);
-        List<Senior> seniors = List.of(senior);
-        Callback callback = mock(Callback.class);
-        Page<Callback> callbackPage = new PageImpl<>(List.of(callback));
-        Pageable pageable = PageRequest.of(0, 10);
+    @Nested
+    @DisplayName("시니또가 탈퇴시 진행중인 콜백이 있으면 취소시키는 로직 테스트")
+    class CancelAssignedCallbackIfInProgress {
 
-        when(memberRepository.findById(memberId)).thenReturn(Optional.of(member));
-        when(seniorRepository.findAllByMember(member)).thenReturn(seniors);
-        when(callbackRepository.findAllBySeniorIn(seniors, pageable)).thenReturn(callbackPage);
-        when(callback.getId()).thenReturn(1L);
-        when(callback.getSeniorName()).thenReturn("SeniorName");
-        when(callback.getPostTime()).thenReturn(LocalDateTime.now());
-        when(callback.getStatus()).thenReturn(Callback.Status.WAITING.name());
+        @Test
+        @DisplayName("진행중인 콜백이 있으면, 콜백을 대기상태로 전환시켜야한다.")
+        void cancelAssignedCallbackIfInProgress1() {
+            //given
+            Member member = mock(Member.class);
+            Callback callback = mock(Callback.class);
 
-        // when
-        Page<CallbackUsageHistoryResponse> result = callbackService.getCallbackHistoryOfGuard(memberId, pageable);
+            when(callbackRepository.findByAssignedMemberIdAndStatus(anyLong(), any(Callback.Status.class))).thenReturn(Optional.of(callback));
 
-        // then
-        assertEquals(1, result.getContent().size());
-        assertEquals("SeniorName", result.getContent().getFirst().seniorName());
+            //when
+            callbackService.cancelAssignedCallbackIfInProgress(member);
+
+            //then
+            verify(callback, atLeastOnce()).cancelAssignment();
+            verify(callback, atLeastOnce()).changeStatusToWaiting();
+        }
+
+        @Test
+        @DisplayName("진행중인 콜백이 없으면, 아무것도 하지 않아야한다.")
+        void cancelAssignedCallbackIfInProgress2() {
+            //given
+            Member member = mock(Member.class);
+            Callback callback = mock(Callback.class);
+
+            when(callbackRepository.findByAssignedMemberIdAndStatus(anyLong(), any(Callback.Status.class))).thenReturn(Optional.empty());
+
+            //when
+            callbackService.cancelAssignedCallbackIfInProgress(member);
+
+            //then
+            verify(callback, never()).cancelAssignment();
+            verify(callback, never()).changeStatusToWaiting();
+        }
     }
 }

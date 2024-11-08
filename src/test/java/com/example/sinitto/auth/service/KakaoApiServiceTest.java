@@ -8,34 +8,29 @@ import org.junit.jupiter.api.Test;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoSettings;
-import org.springframework.beans.factory.annotation.Value;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.Mockito.*;
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.when;
 
 @MockitoSettings
 public class KakaoApiServiceTest {
-    @Mock
-    private HttpServletRequest httpServletRequest;
-
-    @Mock
-    private KakaoProperties kakaoProperties;
-
-    @Value("kakao.clientId")
-    private String clientId;
-
-    @Value("kakao.devRedirectUri")
-    private String devRedirectUri;
-
-    @Value("kakao.redirectUri")
-    private String redirectUri;
-
     @InjectMocks
     KakaoApiService kakaoApiService;
+    @Mock
+    private HttpServletRequest httpServletRequest;
+    @Mock
+    private KakaoProperties kakaoProperties;
+    private String clientId = "testClientId";
+
+    private String devRedirectUri = "testDevUri";
+
+    private String redirectUri = "https://testRedirectUri";
+
+    private String frontUriWithoutHttps = "testRedirectUri";
 
     @Test
-    @DisplayName("getAuthorizationUrl 메소드 테스트 - devUri 포홤 시")
+    @DisplayName("getAuthorizationUrl 메소드 테스트 - devUri 포함 시")
     void getAuthorizationUrlTestWithDevUri() {
         //given
         when(httpServletRequest.getHeader("Referer")).thenReturn("http://localhost:5173");
@@ -54,10 +49,11 @@ public class KakaoApiServiceTest {
     }
 
     @Test
-    @DisplayName("getAuthorizationUrl 메소드 테스트 - 배포 uri 포홤 시")
+    @DisplayName("getAuthorizationUrl 메소드 테스트 - 배포 uri 포함 시")
     void getAuthorizationUrlTestWithAwsUri() {
         //given
-        when(httpServletRequest.getHeader("Referer")).thenReturn("https://dc9u22hnkwb24.cloudfront.net");
+        when(kakaoProperties.frontUriWithoutHttps()).thenReturn(frontUriWithoutHttps);
+        when(httpServletRequest.getHeader("Referer")).thenReturn("https://testRedirectUri");
         when(kakaoProperties.redirectUri()).thenReturn(redirectUri);
         when(kakaoProperties.clientId()).thenReturn(clientId);
 
@@ -77,6 +73,7 @@ public class KakaoApiServiceTest {
     void getAuthorizationUrlTestWithAnotherUri() {
         //given
         when(httpServletRequest.getHeader("Referer")).thenReturn("http://test-uri.com");
+        when(kakaoProperties.frontUriWithoutHttps()).thenReturn(frontUriWithoutHttps);
 
         //when, then
         assertThrows(BadRequestException.class, () -> kakaoApiService.getAuthorizationUrl(httpServletRequest));

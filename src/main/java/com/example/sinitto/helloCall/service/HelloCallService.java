@@ -21,6 +21,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
@@ -120,33 +121,6 @@ public class HelloCallService {
         return new HelloCallDetailResponse(helloCall.getStartDate(), helloCall.getEndDate(),
                 timeSlots, helloCall.getRequirement(), helloCall.getSenior().getName(),
                 helloCall.getSenior().getPhoneNumber(), helloCall.getPrice(), helloCall.getServiceTime());
-    }
-
-    @Transactional
-    public void updateHelloCallByGuard(Long memberId, Long helloCallId, HelloCallDetailUpdateRequest helloCallDetailUpdateRequest) {
-        HelloCall helloCall = helloCallRepository.findById(helloCallId)
-                .orElseThrow(() -> new NotFoundException("id에 해당하는 안부전화 정보를 찾을 수 없습니다."));
-
-        Member member = memberRepository.findById(memberId)
-                .orElseThrow(() -> new NotFoundException("id에 해당하는 멤버를 찾을 수 없습니다."));
-
-        helloCall.checkGuardIsCorrect(member);
-
-        helloCall.updateHelloCall(helloCallDetailUpdateRequest.startDate(), helloCallDetailUpdateRequest.endDate(),
-                helloCallDetailUpdateRequest.price(), helloCallDetailUpdateRequest.serviceTime(), helloCallDetailUpdateRequest.requirement());
-
-        updateTimeSlots(helloCall, helloCallDetailUpdateRequest.timeSlots());
-    }
-
-    private void updateTimeSlots(HelloCall helloCall, List<HelloCallDetailUpdateRequest.TimeSlot> updatedTimeSlots) {
-        timeSlotRepository.deleteAllByHelloCall(helloCall);
-        helloCall.getTimeSlots().clear();
-
-        for (HelloCallDetailUpdateRequest.TimeSlot updatedSlot : updatedTimeSlots) {
-            TimeSlot newTimeSlot = new TimeSlot(updatedSlot.dayName(), updatedSlot.startTime(), updatedSlot.endTime(), helloCall);
-            timeSlotRepository.save(newTimeSlot);
-            helloCall.getTimeSlots().add(newTimeSlot);
-        }
     }
 
     @Transactional
@@ -345,6 +319,22 @@ public class HelloCallService {
         }
 
         return helloCallResponses;
+    }
+
+    @Transactional
+    public void cancelAssignedHelloCallIfInProgress(Member member) {
+
+        List<HelloCall> helloCalls = helloCallRepository.findByMemberAndStatus(member, HelloCall.Status.IN_PROGRESS);
+
+        changeHelloCall(helloCalls);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void changeHelloCall(List<HelloCall> helloCalls) {
+        for (HelloCall helloCall : helloCalls) {
+            helloCall.changeStatusToWaiting();
+            helloCall.setMember(null);
+        }
     }
 
 }

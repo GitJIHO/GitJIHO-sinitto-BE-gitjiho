@@ -3,6 +3,8 @@ package com.example.sinitto.point.service;
 import com.example.sinitto.common.exception.BadRequestException;
 import com.example.sinitto.common.exception.ForbiddenException;
 import com.example.sinitto.common.exception.NotFoundException;
+import com.example.sinitto.common.service.KakaoMessageService;
+import com.example.sinitto.common.service.SlackMessageService;
 import com.example.sinitto.member.entity.Member;
 import com.example.sinitto.member.repository.MemberRepository;
 import com.example.sinitto.point.dto.PointChargeResponse;
@@ -12,6 +14,7 @@ import com.example.sinitto.point.entity.Point;
 import com.example.sinitto.point.entity.PointLog;
 import com.example.sinitto.point.repository.PointLogRepository;
 import com.example.sinitto.point.repository.PointRepository;
+import com.example.sinitto.sinitto.entity.SinittoBankInfo;
 import com.example.sinitto.sinitto.repository.SinittoBankInfoRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -42,6 +45,10 @@ class PointServiceTest {
     SinittoBankInfoRepository sinittoBankInfoRepository;
     @InjectMocks
     PointService pointService;
+    @Mock
+    KakaoMessageService kakaoMessageService;
+    @Mock
+    private SlackMessageService slackMessageService;
 
     @Nested
     @DisplayName("포인트 조회 테스트")
@@ -175,6 +182,9 @@ class PointServiceTest {
             when(pointRepository.findByMember(member)).thenReturn(Optional.of(point));
             when(point.isSufficientForDeduction(10000)).thenReturn(true);
 
+            SinittoBankInfo sinittoBankInfo = mock(SinittoBankInfo.class);
+            when(sinittoBankInfoRepository.findByMemberId(1L)).thenReturn(Optional.of(sinittoBankInfo));
+
             //when
             pointService.savePointWithdrawRequest(1L, 10000);
 
@@ -225,4 +235,124 @@ class PointServiceTest {
             assertThrows(BadRequestException.class, () -> pointService.savePointWithdrawRequest(1L, 10000));
         }
     }
+
+    @Nested
+    @DisplayName("포인트 적립 테스트")
+    class EarnPointTest {
+        @Test
+        @DisplayName("포인트 적립 성공한다.")
+        void earnPoint1() {
+            //given
+            Point point = mock(Point.class);
+            when(pointRepository.findByMemberId(1L)).thenReturn(Optional.of(point));
+
+            //when
+            pointService.earnPoint(1L, 10000, PointLog.Content.COMPLETE_HELLO_CALL_AND_EARN);
+
+            //then
+            verify(point).earn(10000);
+            verify(pointLogRepository).save(any(PointLog.class));
+        }
+
+        @Test
+        @DisplayName("멤버에 연관된 포인트가 없으면 예외를 발생시켜야한다.")
+        void earnPoint2() {
+            //given
+            when(pointRepository.findByMemberId(1L)).thenReturn(Optional.empty());
+
+
+            //when then
+            assertThrows(NotFoundException.class, () -> pointService.earnPoint(1L, 10000, PointLog.Content.COMPLETE_CALLBACK_AND_EARN));
+        }
+    }
+
+    @Nested
+    @DisplayName("포인트 차감 테스트")
+    class DeductPointTest {
+
+        @Test
+        @DisplayName("포인트 차감 성공한다.")
+        void deductPoint1() {
+            //given
+            Point point = mock(Point.class);
+            when(pointRepository.findByMemberIdWithWriteLock(1L)).thenReturn(Optional.of(point));
+            when(point.isSufficientForDeduction(10000)).thenReturn(true);
+
+            //when
+            pointService.deductPoint(1L, 10000, PointLog.Content.SPEND_COMPLETE_CALLBACK);
+
+            //then
+            verify(point).deduct(10000);
+            verify(pointLogRepository).save(any(PointLog.class));
+        }
+
+        @Test
+        @DisplayName("멤버에 연관된 포인트가 없으면 예외를 발생시켜야한다.")
+        void deductPoint2() {
+            //given
+            when(pointRepository.findByMemberIdWithWriteLock(1L)).thenReturn(Optional.empty());
+
+            //when then
+
+            assertThrows(NotFoundException.class, () -> pointService.deductPoint(1L, 10000, PointLog.Content.SPEND_COMPLETE_CALLBACK));
+        }
+
+        @Test
+        @DisplayName("포인트가 부족하면 예외를 발생시켜야한다.")
+        void deductPoint3() {
+
+            //given
+            Point point = mock(Point.class);
+            when(pointRepository.findByMemberIdWithWriteLock(1L)).thenReturn(Optional.of(point));
+            when(point.isSufficientForDeduction(10000)).thenReturn(false);
+
+            //when then
+            assertThrows(BadRequestException.class, () -> pointService.deductPoint(1L, 10000, PointLog.Content.SPEND_COMPLETE_HELLO_CALL));
+        }
+    }
+
+    @Nested
+    @DisplayName("포인트 환불 테스트")
+    class RefundPointByDeleteTest {
+
+        @Test
+        @DisplayName("포인트 환불 성공한다. 성공하면 포인트가 되돌아 온다(적립)")
+        void refundPointByDelete1() {
+            //given
+            Point point = mock(Point.class);
+            when(pointRepository.findByMemberIdWithWriteLock(1L)).thenReturn(Optional.of(point));
+            when(point.isSufficientForDeduction(10000)).thenReturn(true);
+
+            //when
+            pointService.refundPointByDelete(1L, 10000, PointLog.Content.SPEND_CANCEL_HELLO_CALL);
+
+            //then
+            verify(point).earn(10000);
+            verify(pointLogRepository).save(any(PointLog.class));
+        }
+
+
+        @Test
+        @DisplayName("멤버에 연관된 포인트가 없으면 예외를 발생시켜야한다.")
+        void refundPointByDelete2() {
+            //given
+            when(pointRepository.findByMemberIdWithWriteLock(1L)).thenReturn(Optional.empty());
+
+            //when then
+            assertThrows(NotFoundException.class, () -> pointService.refundPointByDelete(1L, 10000, PointLog.Content.SPEND_CANCEL_HELLO_CALL));
+        }
+
+        @Test
+        @DisplayName("포인트가 부족하면 예외를 발생시켜야한다.")
+        void refundPointByDelete3() {
+            //given
+            Point point = mock(Point.class);
+            when(pointRepository.findByMemberIdWithWriteLock(1L)).thenReturn(Optional.of(point));
+            when(point.isSufficientForDeduction(10000)).thenReturn(false);
+
+            //when then
+            assertThrows(BadRequestException.class, () -> pointService.refundPointByDelete(1L, 10000, PointLog.Content.SPEND_CANCEL_HELLO_CALL));
+        }
+    }
+
 }
